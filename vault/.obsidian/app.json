@@ -1,3 +1,4 @@
 {
-  "attachmentFolderPath": "uploads"
+  "attachmentFolderPath": "uploads",
+  "detectAllFileExtensions": true
 }

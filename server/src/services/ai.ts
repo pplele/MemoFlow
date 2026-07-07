@@ -14,6 +14,7 @@ export interface ParsedMemory {
   entities: Array<{ type: string; name: string; value?: string; label?: string; deadline?: string }>;
   relations: Array<{ from: string; relation: string; to: string }>;
   summary: string;
+  confidence?: number;
   fact_hints?: string[];
 }
 

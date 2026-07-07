@@ -2,12 +2,53 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { config } from '../config/index.js';
 import { createMemory, CreateMemoryResult } from '../services/memory-parser.js';
 import { isAllowedFileType } from '../services/document-parser.js';
 import { decodeFileName } from '../services/encoding.js';
 
 const router = Router();
+
+function getFileHash(filePath: string): string {
+  const data = fs.readFileSync(filePath);
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+function findDuplicateFile(uploadsDir: string, newFile: Express.Multer.File): string | null {
+  const newHash = getFileHash(newFile.path);
+  
+  const categories = ['images', 'word', 'excel', 'ppt', 'pdf', 'archives', 'others'];
+  for (const cat of categories) {
+    const catDir = path.join(uploadsDir, cat);
+    if (!fs.existsSync(catDir)) continue;
+    
+    const files = fs.readdirSync(catDir);
+    for (const file of files) {
+      const filePath = path.join(catDir, file);
+      if (!fs.statSync(filePath).isFile()) continue;
+      
+      const existingHash = getFileHash(filePath);
+      if (existingHash === newHash) {
+        return filePath;
+      }
+    }
+  }
+  
+  // 也检查根目录（兼容旧文件）
+  const rootFiles = fs.readdirSync(uploadsDir);
+  for (const file of rootFiles) {
+    const filePath = path.join(uploadsDir, file);
+    if (!fs.statSync(filePath).isFile()) continue;
+    
+    const existingHash = getFileHash(filePath);
+    if (existingHash === newHash) {
+      return filePath;
+    }
+  }
+  
+  return null;
+}
 
 function extractSimpleTags(text: string): string[] {
   const tags: string[] = [];
@@ -98,9 +139,47 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+function getFileCategory(filename: string, mimetype: string): string {
+  const ext = path.extname(filename).toLowerCase().slice(1);
+  
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext) || mimetype.startsWith('image/')) {
+    return 'images';
+  }
+  if (['doc', 'docx'].includes(ext)) {
+    return 'word';
+  }
+  if (['xls', 'xlsx', 'csv'].includes(ext)) {
+    return 'excel';
+  }
+  if (['ppt', 'pptx'].includes(ext)) {
+    return 'ppt';
+  }
+  if (['pdf'].includes(ext)) {
+    return 'pdf';
+  }
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(ext)) {
+    return 'archives';
+  }
+  return 'others';
+}
+
+function ensureCategoryDir(category: string): string {
+  const dir = path.join(uploadsDir, category);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+// 初始化所有分类目录
+['images', 'word', 'excel', 'ppt', 'pdf', 'archives', 'others'].forEach(cat => ensureCategoryDir(cat));
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsDir);
+    const decodedName = decodeFileName(file.originalname);
+    const category = getFileCategory(decodedName, file.mimetype);
+    const dir = ensureCategoryDir(category);
+    cb(null, dir);
   },
   filename: (req, file, cb) => {
     const timestamp = Date.now();
@@ -149,8 +228,35 @@ router.post('/upload', upload.array('files', 20), async (req: Request, res: Resp
       decodedName: decodeFileName(f.originalname),
     }));
 
+    const processedFiles: Array<{
+      name: string;
+      path: string;
+      size: number;
+      mimetype: string;
+    }> = [];
+
     for (const file of decodedFiles) {
       console.log('[File] Uploaded:', file.decodedName, 'size:', file.size, 'type:', file.mimetype);
+      
+      const duplicatePath = findDuplicateFile(uploadsDir, file);
+      if (duplicatePath) {
+        console.log('[File] Duplicate found, removing:', file.path);
+        fs.unlinkSync(file.path);
+        
+        processedFiles.push({
+          name: file.decodedName,
+          path: duplicatePath,
+          size: file.size,
+          mimetype: file.mimetype,
+        });
+      } else {
+        processedFiles.push({
+          name: file.decodedName,
+          path: file.path,
+          size: file.size,
+          mimetype: file.mimetype,
+        });
+      }
     }
 
     const fileNames = decodedFiles.map(f => f.decodedName).join(', ');
@@ -168,23 +274,13 @@ router.post('/upload', upload.array('files', 20), async (req: Request, res: Resp
       type,
       skipAi: true,
       tags,
-      files: decodedFiles.map(f => ({
-        name: f.decodedName,
-        path: f.path,
-        size: f.size,
-        mimetype: f.mimetype,
-      })),
+      files: processedFiles,
     });
 
     res.status(201).json({
       ...memoryResult,
-      file_count: files.length,
-      files: decodedFiles.map(f => ({
-        name: f.decodedName,
-        path: f.path,
-        size: f.size,
-        mimetype: f.mimetype,
-      })),
+      file_count: processedFiles.length,
+      files: processedFiles,
     });
   } catch (error) {
     const files = req.files as Express.Multer.File[];

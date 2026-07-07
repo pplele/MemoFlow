@@ -60,7 +60,6 @@ function generateMarkdown(
   createdAt: string,
   files?: UploadedFile[]
 ): string {
-  const attachmentsSection = buildAttachmentsSection(files);
   const categoryPath = parsed.category + (parsed.sub_category ? `/${parsed.sub_category}` : '');
   const tags = parsed.tags.map((t) => `"${t}"`).join(', ');
   const entitiesYaml = parsed.entities.map((e) => {
@@ -75,16 +74,41 @@ function generateMarkdown(
     `  - from: "${r.from}"\n    relation: "${r.relation}"\n    to: "${r.to}"`
   );
 
+  const summary = parsed.summary || content.slice(0, 100);
+  const title = sanitizeFileName(summary.slice(0, 30)) || '记忆';
+  const confidence = parsed.confidence ?? 0;
+
+  const tagsDisplay = parsed.tags.length > 0
+    ? parsed.tags.map((t) => `#${t}`).join(' ')
+    : '无';
+
+  const entitiesDisplay = parsed.entities.length > 0
+    ? parsed.entities.map((e) => `- **${e.name}** (${e.type})${e.value ? `: ${e.value}` : ''}`).join('\n')
+    : '暂无';
+
   const entityLinks = parsed.entities
     .filter((e) => e.name)
     .map((e) => `- [[${e.name}]]`)
     .join('\n');
 
-  const summary = parsed.summary || content.slice(0, 100);
-  const title = sanitizeFileName(summary.slice(0, 30)) || '记忆';
+  const uploadsDir = path.join(config.vault.path, 'uploads');
+  const attachmentsSection = files && files.length > 0
+    ? files.map((f) => {
+        // 生成相对于 uploads 目录的路径（如 images/xxx.jpg），与 Obsidian 双链语法匹配
+        const relPath = path.relative(uploadsDir, f.path).replace(/\\/g, '/');
+        return f.mimetype.startsWith('image/') ? `![[${relPath}]]` : `[[${relPath}]]`;
+      }).join('\n')
+    : '暂无';
+
+  const entitiesList = parsed.entities.map((e) => e.name).filter(Boolean);
+  const relevantFacts = getRelevantFacts(entitiesList);
+  const factsDisplay = relevantFacts.length > 0
+    ? relevantFacts.map((f) => `- **${f.entity}** → ${f.attribute}: ${f.value}`).join('\n')
+    : '暂无';
 
   return `---
 id: "${id}"
+title: "${title}"
 created_at: "${createdAt}"
 updated_at: "${createdAt}"
 source: "${source}"
@@ -95,33 +119,52 @@ entities:
 ${entitiesYaml.join('\n') || '[]'}
 relations:
 ${relationsYaml.join('\n') || '[]'}
-facts: []
+confidence: ${confidence}
 ---
 
 # ${title}
+
+## 正文
 
 ${content}
 
 ## AI 解析摘要
 
-**分类**: ${categoryPath}
-**标签**: ${parsed.tags.join(', ') || '无'}
-**摘要**: ${summary}
+${summary}
 
-## 关联
+## 元数据
+
+| 属性 | 值 |
+|------|------|
+| ID | \`${id}\` |
+| 来源 | ${source} |
+| 类型 | ${type} |
+| 分类 | ${categoryPath} |
+| 创建时间 | ${createdAt} |
+| 更新时间 | ${createdAt} |
+| 置信度 | ${(confidence * 100).toFixed(0)}% |
+
+## 标签
+
+${tagsDisplay}
+
+## 实体
+
+${entitiesDisplay}
+
+## 关联记忆
 
 ${entityLinks || '（暂无关联）'}
 - [[${categoryPath}]]
-${attachmentsSection}`;
-}
 
-function buildAttachmentsSection(files?: UploadedFile[]): string {
-  if (!files || files.length === 0) return '';
-  const lines = files.map((f) => {
-    const diskName = path.basename(f.path);
-    return f.mimetype.startsWith('image/') ? `![[${diskName}]]` : `[[${diskName}]]`;
-  });
-  return `\n## 附件\n\n${lines.join('\n')}\n`;
+## 附件
+
+${attachmentsSection}
+
+## 提取的事实
+
+${factsDisplay}
+`;
 }
 
 function extractEntitiesFromText(text: string): string[] {

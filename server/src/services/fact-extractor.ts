@@ -1,5 +1,6 @@
 import { extractFacts, ExtractedFact } from './ai.js';
 import { factDb, memoryDb } from '../db/index.js';
+import { writeFactsToVault } from './fact-writer.js';
 
 export async function runFactExtraction(): Promise<ExtractedFact[]> {
   const memories = memoryDb.all();
@@ -56,6 +57,9 @@ export async function runFactExtraction(): Promise<ExtractedFact[]> {
   }
 
   console.log(`[FactExtractor] Extracted ${extractedFacts.length} facts (${newCount} new, ${extractedFacts.length - newCount} updated)`);
+  
+  writeFactsToVault();
+  
   return extractedFacts;
 }
 

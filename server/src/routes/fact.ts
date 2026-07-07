@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { factDb } from '../db/index.js';
 import { runFactExtraction } from '../services/fact-extractor.js';
+import { writeFactsToVault, writeFactToVault } from '../services/fact-writer.js';
 
 const router = Router();
 
@@ -55,6 +56,7 @@ router.put('/:id', async (req: Request, res: Response, next: NextFunction) => {
     if (!updated) {
       return res.status(404).json({ error: `Fact ${req.params.id} not found` });
     }
+    writeFactToVault(updated.entity);
     res.json(rowToFact(updated));
   } catch (error) {
     next(error);
@@ -64,9 +66,13 @@ router.put('/:id', async (req: Request, res: Response, next: NextFunction) => {
 // DELETE /facts/:id
 router.delete('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const fact = factDb.getById(req.params.id);
     const deleted = factDb.delete(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: `Fact ${req.params.id} not found` });
+    }
+    if (fact) {
+      writeFactToVault(fact.entity);
     }
     res.json({ id: req.params.id, deleted: true });
   } catch (error) {
