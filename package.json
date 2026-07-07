@@ -1,0 +1,26 @@
+{
+  "name": "memoflow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MemoFlow - 本地优先的个人数字记忆中枢",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n client,server -c cyan,magenta \"npm run dev -w client\" \"npm run dev -w server\"",
+    "dev:client": "npm run dev -w client",
+    "dev:server": "npm run dev -w server",
+    "build": "npm run build -w client && npm run build -w server",
+    "build:client": "npm run build -w client",
+    "build:server": "npm run build -w server",
+    "setup": "npm run setup -w server",
+    "lint": "npm run lint -w client && npm run lint -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

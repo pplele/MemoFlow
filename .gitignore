@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Environment variables (contains API keys — NEVER commit)
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Database (contains personal memory data)
+*.db
+*.sqlite
+*.sqlite3
+server/data/
+
+# Vault — personal user data (NEVER commit)
+vault/memories/
+vault/memories_backup/
+vault/uploads/
+vault/facts/
+vault/assets/
+vault/*.md
+
+# Vault — Obsidian personal state (keep project configs)
+vault/.obsidian/workspace.json
+vault/.obsidian/workspace-mobile.json
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.trae/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+*.local
+.cache/
+.temp/
