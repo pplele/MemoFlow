@@ -2,17 +2,9 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { memoryDb, factDb } from '../db/index.js';
 import { semanticSearch } from '../services/embedding.js';
 import { decodeFileName } from '../services/encoding.js';
+import { safeParse } from '../utils/index.js';
 
 const router = Router();
-
-function safeParse<T>(json: string | null | undefined, fallback: T): T {
-  if (!json) return fallback;
-  try {
-    return JSON.parse(json) as T;
-  } catch {
-    return fallback;
-  }
-}
 
 // 归一化关键词分数到 0-1 区间
 function normalizeKeywordScores(

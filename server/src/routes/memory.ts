@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { memoryDb } from '../db/index.js';
 import { createMemory, deleteMemory, updateMemory } from '../services/memory-parser.js';
 import { decodeFileName } from '../services/encoding.js';
+import { safeParse } from '../utils/index.js';
 
 const router = Router();
 
@@ -13,15 +14,6 @@ interface EntityRow {
   value?: string;
   label?: string;
   deadline?: string;
-}
-
-function safeParse<T>(json: string | null | undefined, fallback: T): T {
-  if (!json) return fallback;
-  try {
-    return JSON.parse(json) as T;
-  } catch {
-    return fallback;
-  }
 }
 
 interface UploadedFile {

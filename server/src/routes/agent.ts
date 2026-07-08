@@ -3,6 +3,8 @@ import { runAgent, AgentStreamEvent } from '../services/agent/loop.js';
 
 const router = Router();
 
+let activeSession = false;
+
 // ==================== POST /api/agent/chat ====================
 
 router.post('/chat', async (req: Request, res: Response) => {
@@ -11,6 +13,12 @@ router.post('/chat', async (req: Request, res: Response) => {
   if (!message || typeof message !== 'string' || !message.trim()) {
     return res.status(400).json({ error: 'message is required' });
   }
+
+  if (activeSession) {
+    return res.status(429).json({ error: '已有 Agent 会话进行中，请等待当前会话结束' });
+  }
+
+  activeSession = true;
 
   // 设置 SSE 响应头
   res.setHeader('Content-Type', 'text/event-stream');
@@ -30,7 +38,7 @@ router.post('/chat', async (req: Request, res: Response) => {
 
   // 客户端断开时清理
   req.on('close', () => {
-    // 流已结束，无需额外处理
+    activeSession = false;
   });
 
   try {
@@ -43,6 +51,8 @@ router.post('/chat', async (req: Request, res: Response) => {
     // 如果 headers 已发送，通过 SSE 发送错误
     emit({ type: 'error', data: `服务端错误: ${err.message}` });
     emit({ type: 'done', data: null });
+  } finally {
+    activeSession = false;
   }
 
   res.end();

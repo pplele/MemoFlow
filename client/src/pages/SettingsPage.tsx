@@ -311,6 +311,8 @@ export default function SettingsPage() {
         ...aiConfig,
         provider: activeTab === 'ai-local' ? 'ollama' : aiConfig.provider,
         ollamaEnabled: activeTab === 'ai-local',
+        updateApiKey: aiConfig.apiKey !== '***' && aiConfig.apiKey !== '',
+        updateEmbeddingApiKey: aiConfig.embeddingApiKey !== '***' && aiConfig.embeddingApiKey !== '',
       };
       const r = await fetch('/api/ai-config', {
         method: 'POST',
@@ -322,6 +324,12 @@ export default function SettingsPage() {
         setSaveMessage(data.message);
         if (data.providersWithConfig) {
           setAiConfig(prev => ({ ...prev, providersWithConfig: data.providersWithConfig }));
+        }
+        if (configToSave.updateApiKey) {
+          setAiConfig(prev => ({ ...prev, apiKey: '***' }));
+        }
+        if (configToSave.updateEmbeddingApiKey) {
+          setAiConfig(prev => ({ ...prev, embeddingApiKey: '***' }));
         }
       } else {
         setSaveMessage(`保存失败: ${data.message}`);

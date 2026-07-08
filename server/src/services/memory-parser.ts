@@ -5,7 +5,7 @@ import { parseMemory, ParsedMemory } from './ai.js';
 import { memoryDb, embeddingDb, factDb } from '../db/index.js';
 import { generateAndStoreEmbedding, removeFromCache } from './embedding.js';
 import { markPendingWrite, clearPendingWrite } from './vault-watcher.js';
-import { runFactExtraction } from './fact-extractor.js';
+import { scheduleFactExtraction } from './fact-extractor.js';
 
 export interface UploadedFile {
   name: string;
@@ -261,12 +261,8 @@ export async function createMemory(input: CreateMemoryInput): Promise<CreateMemo
     console.error(`[Embedding] Failed to generate for ${id}:`, err);
   });
 
-  // 异步更新事实库，不阻塞主流程
-  setTimeout(() => {
-    runFactExtraction().catch((err) => {
-      console.error(`[FactExtract] Failed after memory creation:`, err);
-    });
-  }, 2000);
+  // 异步更新事实库（带防抖，5秒内多次触发合并为一次）
+  scheduleFactExtraction();
 
   return {
     id,

@@ -2,17 +2,9 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { factDb } from '../db/index.js';
 import { runFactExtraction } from '../services/fact-extractor.js';
 import { writeFactsToVault, writeFactToVault } from '../services/fact-writer.js';
+import { safeParse } from '../utils/index.js';
 
 const router = Router();
-
-function safeParse<T>(json: string | null | undefined, fallback: T): T {
-  if (!json) return fallback;
-  try {
-    return JSON.parse(json) as T;
-  } catch {
-    return fallback;
-  }
-}
 
 function rowToFact(row: any) {
   return {

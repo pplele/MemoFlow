@@ -189,6 +189,12 @@ const storage = multer.diskStorage({
   },
 });
 
+const EXECUTABLE_BLACKLIST = new Set([
+  'exe', 'msi', 'com', 'bat', 'cmd', 'ps1', 'psm1', 'js', 'jse', 'vb', 'vbs', 
+  'scr', 'pif', 'lnk', 'inf', 'sys', 'dll', 'ocx', 'cpl', 'drv', 'sys',
+  'jar', 'class', 'py', 'pyc', 'pyd', 'rb', 'php', 'sh', 'bash', 'zsh', 'fish',
+]);
+
 const upload = multer({
   storage,
   limits: {
@@ -196,6 +202,13 @@ const upload = multer({
   },
   fileFilter: (req, file, cb) => {
     const decodedName = decodeFileName(file.originalname);
+    const ext = path.extname(decodedName).toLowerCase().slice(1);
+    
+    if (EXECUTABLE_BLACKLIST.has(ext)) {
+      cb(new Error(`禁止上传可执行文件: ${decodedName}`));
+      return;
+    }
+    
     if (isAllowedFileType(decodedName, config.upload.allowedTypes, file.mimetype)) {
       cb(null, true);
     } else {

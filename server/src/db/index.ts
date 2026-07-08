@@ -82,26 +82,30 @@ export function initDb(): Promise<void> {
 function scheduleSave() {
   if (saveTimer) clearInterval(saveTimer);
   saveTimer = setInterval(() => {
-    saveToDisk();
+    saveToDisk().catch(console.error);
   }, 5000);
 }
 
 let dirty = false;
+let writeLock = false;
 
 export function markDirty() {
   dirty = true;
 }
 
-export function saveToDisk() {
-  if (!dirty) return;
+export async function saveToDisk() {
+  if (!dirty || writeLock) return;
+  writeLock = true;
   try {
     const dataPath = getDataPath();
     const tmpPath = dataPath + '.tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(store, null, 2), 'utf-8');
-    fs.renameSync(tmpPath, dataPath);
+    await fs.promises.writeFile(tmpPath, JSON.stringify(store, null, 2), 'utf-8');
+    await fs.promises.rename(tmpPath, dataPath);
     dirty = false;
   } catch (error) {
     console.error('[DB] Failed to save:', error);
+  } finally {
+    writeLock = false;
   }
 }
 

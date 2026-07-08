@@ -18,6 +18,7 @@ interface ProviderConfig {
 interface AIConfig {
   provider: string;
   apiKey: string;
+  updateApiKey?: boolean;
   baseUrl: string;
   model: string;
   temperature: number;
@@ -26,6 +27,7 @@ interface AIConfig {
   ollamaModel: string;
   embeddingProvider: string;
   embeddingApiKey: string;
+  updateEmbeddingApiKey?: boolean;
   embeddingBaseUrl: string;
   embeddingModel: string;
 }
@@ -117,15 +119,12 @@ router.post('/ai-config', async (req: Request, res: Response) => {
     
     const existingConfig = providerConfigs[provider] || {};
     
-    if (body.apiKey && body.apiKey !== '***') {
+    const shouldUpdateApiKey = body.updateApiKey === true;
+    const newApiKey = shouldUpdateApiKey ? body.apiKey : existingConfig.apiKey;
+    
+    if (newApiKey) {
       providerConfigs[provider] = {
-        apiKey: body.apiKey,
-        baseUrl: body.baseUrl || DEFAULT_CONFIGS[provider]?.baseUrl || '',
-        model: body.model || DEFAULT_CONFIGS[provider]?.model || '',
-      };
-    } else if (existingConfig.apiKey) {
-      providerConfigs[provider] = {
-        apiKey: existingConfig.apiKey,
+        apiKey: newApiKey,
         baseUrl: body.baseUrl || DEFAULT_CONFIGS[provider]?.baseUrl || '',
         model: body.model || DEFAULT_CONFIGS[provider]?.model || '',
       };

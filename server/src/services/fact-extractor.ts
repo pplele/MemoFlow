@@ -2,6 +2,20 @@ import { extractFacts, ExtractedFact } from './ai.js';
 import { factDb, memoryDb } from '../db/index.js';
 import { writeFactsToVault } from './fact-writer.js';
 
+let factExtractionTimer: ReturnType<typeof setTimeout> | null = null;
+const DEBOUNCE_DELAY = 5000;
+
+export function scheduleFactExtraction(): void {
+  if (factExtractionTimer) {
+    clearTimeout(factExtractionTimer);
+  }
+  factExtractionTimer = setTimeout(() => {
+    runFactExtraction().catch((err) => {
+      console.error('[FactExtractor] Failed:', err);
+    });
+  }, DEBOUNCE_DELAY);
+}
+
 export async function runFactExtraction(): Promise<ExtractedFact[]> {
   const memories = memoryDb.all();
 
