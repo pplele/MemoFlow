@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { config } from '../config/index.js';
+import { decodeFileName } from '../services/encoding.js';
 
 export interface MemoryRow {
   id: string;
@@ -160,7 +161,7 @@ export const memoryDb = {
           const files = JSON.parse(m.files_json);
           if (Array.isArray(files)) {
             for (const f of files) {
-              if (f.name && f.name.toLowerCase().includes(kw)) {
+              if (f.name && decodeFileName(f.name).toLowerCase().includes(kw)) {
                 score += 3;
                 break;
               }

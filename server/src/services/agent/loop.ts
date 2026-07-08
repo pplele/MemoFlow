@@ -1,4 +1,4 @@
-import { config } from '../../config/index.js';
+import { getAdapter } from '../ai.js';
 import { getOpenAITools, executeTool } from './tools.js';
 
 // ==================== 类型定义 ====================
@@ -67,20 +67,26 @@ async function callLlm(
   messages: AgentChatMessage[],
   signal?: AbortSignal
 ): Promise<ChatCompletionResponse> {
-  if (!config.doubao.apiKey) {
-    throw new Error('DOUBAO_API_KEY is not set');
+  const adapter = getAdapter();
+  const tools = getOpenAITools();
+  
+  let url: string;
+  let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  
+  if (adapter.provider === 'ollama') {
+    url = `${adapter.baseUrl}/api/chat`;
+  } else {
+    url = `${adapter.baseUrl}/chat/completions`;
+    headers['Authorization'] = `Bearer ${adapter.apiKey}`;
   }
-
-  const response = await fetch(`${config.doubao.baseUrl}/chat/completions`, {
+  
+  const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.doubao.apiKey}`,
-    },
+    headers,
     body: JSON.stringify({
-      model: config.doubao.model,
+      model: adapter.model,
       messages,
-      tools: getOpenAITools(),
+      tools,
       temperature: 0.3,
     }),
     signal,
@@ -88,7 +94,7 @@ async function callLlm(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`豆包 API 错误: ${response.status} - ${errorText}`);
+    throw new Error(`LLM API 错误: ${response.status} - ${errorText}`);
   }
 
   return response.json() as Promise<ChatCompletionResponse>;

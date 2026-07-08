@@ -13,6 +13,7 @@ import statsRoutes from './routes/stats.js';
 import linkRoutes from './routes/links.js';
 import feishuRoutes from './routes/feishu.js';
 import agentRoutes from './routes/agent.js';
+import aiConfigRoutes from './routes/ai-config.js';
 import { startVaultWatcher } from './services/vault-watcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -43,6 +44,7 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/links', linkRoutes);
 app.use('/api/feishu', feishuRoutes);
 app.use('/api/agent', agentRoutes);
+app.use('/api', aiConfigRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

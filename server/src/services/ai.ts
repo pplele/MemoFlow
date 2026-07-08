@@ -1,6 +1,6 @@
 import { config } from '../config/index.js';
 
-// ==================== 类型定义 ====================
+export type LlmProvider = 'openai' | 'anthropic' | 'gemini' | 'ollama';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -45,7 +45,377 @@ export interface QAContext {
   facts: Array<{ entity: string; attribute: string; value: string }>;
 }
 
-// ==================== Prompt 模板 ====================
+interface LlmAdapter {
+  chatCompletion(messages: ChatMessage[], temperature?: number, retries?: number): Promise<string>;
+  provider: LlmProvider;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+interface EmbeddingAdapter {
+  createEmbedding(text: string): Promise<EmbeddingResult>;
+  provider: LlmProvider;
+}
+
+function detectProvider(baseUrl: string): LlmProvider {
+  const url = baseUrl.toLowerCase();
+  if (url.includes('anthropic.com')) return 'anthropic';
+  if (url.includes('googleapis.com') || url.includes('generativelanguage')) return 'gemini';
+  if (url.includes('localhost:11434') || url.includes('ollama')) return 'ollama';
+  return 'openai';
+}
+
+class OpenAIAdapter implements LlmAdapter {
+  provider: LlmProvider = 'openai';
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+
+  constructor(baseUrl: string, apiKey: string, model: string) {
+    this.baseUrl = baseUrl;
+    this.apiKey = apiKey;
+    this.model = model;
+  }
+
+  async chatCompletion(messages: ChatMessage[], temperature = 0.3, retries = 2): Promise<string> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.model,
+            messages,
+            temperature,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`API error: ${response.status} - ${errorText}`);
+        }
+
+        const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+        return data.choices?.[0]?.message?.content || '';
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt < retries) {
+          console.warn(`[AI] Retry ${attempt + 1}/${retries}...`);
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        }
+      }
+    }
+
+    throw lastError!;
+  }
+}
+
+class AnthropicAdapter implements LlmAdapter {
+  provider: LlmProvider = 'anthropic';
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+
+  constructor(baseUrl: string, apiKey: string, model: string) {
+    this.baseUrl = baseUrl;
+    this.apiKey = apiKey;
+    this.model = model;
+  }
+
+  async chatCompletion(messages: ChatMessage[], temperature = 0.3, retries = 2): Promise<string> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const anthropicMessages = messages.map((m) => ({
+          role: m.role === 'system' ? 'user' : m.role,
+          content: m.content,
+        }));
+
+        const response = await fetch(`${this.baseUrl}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': this.apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: this.model,
+            messages: anthropicMessages,
+            temperature,
+            max_tokens: 4096,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+        }
+
+        const data = (await response.json()) as { content?: Array<{ text?: string }> };
+        return data.content?.[0]?.text || '';
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt < retries) {
+          console.warn(`[AI] Retry ${attempt + 1}/${retries}...`);
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        }
+      }
+    }
+
+    throw lastError!;
+  }
+}
+
+class GeminiAdapter implements LlmAdapter {
+  provider: LlmProvider = 'gemini';
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+
+  constructor(baseUrl: string, apiKey: string, model: string) {
+    this.baseUrl = baseUrl;
+    this.apiKey = apiKey;
+    this.model = model;
+  }
+
+  async chatCompletion(messages: ChatMessage[], temperature = 0.3, retries = 2): Promise<string> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const geminiMessages = messages.map((m) => ({
+          role: m.role === 'system' ? 'user' : m.role,
+          parts: [{ text: m.content }],
+        }));
+
+        const response = await fetch(`${this.baseUrl}/v1/models/${this.model}:generateContent?key=${this.apiKey}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contents: geminiMessages,
+            generationConfig: { temperature },
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+        }
+
+        const data = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+        return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt < retries) {
+          console.warn(`[AI] Retry ${attempt + 1}/${retries}...`);
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        }
+      }
+    }
+
+    throw lastError!;
+  }
+}
+
+class OllamaAdapter implements LlmAdapter {
+  provider: LlmProvider = 'ollama';
+  baseUrl: string;
+  apiKey: string = '';
+  model: string;
+
+  constructor(baseUrl: string, model: string) {
+    this.baseUrl = baseUrl;
+    this.model = model;
+  }
+
+  async chatCompletion(messages: ChatMessage[], temperature = 0.3, retries = 2): Promise<string> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(`${this.baseUrl}/api/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: this.model,
+            messages,
+            temperature,
+            stream: false,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Ollama API error: ${response.status} - ${errorText}`);
+        }
+
+        const data = (await response.json()) as { message?: { content?: string } };
+        return data.message?.content || '';
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt < retries) {
+          console.warn(`[AI] Retry ${attempt + 1}/${retries}...`);
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        }
+      }
+    }
+
+    throw lastError!;
+  }
+}
+
+function createAdapter(): LlmAdapter {
+  const { llm, ollama } = config;
+  
+  if (llm.provider === 'ollama' || ollama.enabled) {
+    return new OllamaAdapter(ollama.baseUrl, ollama.model);
+  }
+
+  const detectedProvider = detectProvider(llm.baseUrl);
+  
+  switch (detectedProvider) {
+    case 'anthropic':
+      return new AnthropicAdapter(llm.baseUrl, llm.apiKey, llm.model);
+    case 'gemini':
+      return new GeminiAdapter(llm.baseUrl, llm.apiKey, llm.model);
+    case 'ollama':
+      return new OllamaAdapter(llm.baseUrl, llm.model);
+    default:
+      return new OpenAIAdapter(llm.baseUrl, llm.apiKey, llm.model);
+  }
+}
+
+class OpenAIEmbeddingAdapter implements EmbeddingAdapter {
+  provider: LlmProvider = 'openai';
+  private baseUrl: string;
+  private apiKey: string;
+  private model: string;
+
+  constructor(baseUrl: string, apiKey: string, model: string) {
+    this.baseUrl = baseUrl;
+    this.apiKey = apiKey;
+    this.model = model;
+  }
+
+  async createEmbedding(text: string): Promise<EmbeddingResult> {
+    const response = await fetch(`${this.baseUrl}/embeddings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: text,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Embedding API error: ${response.status} - ${errorText}`);
+    }
+
+    const data = (await response.json()) as { data?: Array<{ embedding?: number[] }> };
+    return {
+      vector: data.data?.[0]?.embedding || [],
+    };
+  }
+}
+
+class OllamaEmbeddingAdapter implements EmbeddingAdapter {
+  provider: LlmProvider = 'ollama';
+  private baseUrl: string;
+  private model: string;
+
+  constructor(baseUrl: string, model: string) {
+    this.baseUrl = baseUrl;
+    this.model = model;
+  }
+
+  async createEmbedding(text: string): Promise<EmbeddingResult> {
+    const response = await fetch(`${this.baseUrl}/api/embeddings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        prompt: text,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Ollama embedding error: ${response.status} - ${errorText}`);
+    }
+
+    const data = (await response.json()) as { embedding?: number[] };
+    return {
+      vector: data.embedding || [],
+    };
+  }
+}
+
+function createEmbeddingAdapter(): EmbeddingAdapter {
+  const { embedding, llm, ollama } = config;
+  
+  if (embedding.provider && embedding.baseUrl) {
+    if (embedding.provider === 'ollama') {
+      return new OllamaEmbeddingAdapter(embedding.baseUrl, embedding.model || ollama.model);
+    }
+    return new OpenAIEmbeddingAdapter(embedding.baseUrl, embedding.apiKey || llm.apiKey, embedding.model);
+  }
+
+  if (llm.provider === 'ollama' || ollama.enabled) {
+    return new OllamaEmbeddingAdapter(ollama.baseUrl, ollama.model);
+  }
+
+  const detectedProvider = detectProvider(llm.baseUrl);
+  
+  switch (detectedProvider) {
+    case 'ollama':
+      return new OllamaEmbeddingAdapter(llm.baseUrl, llm.model);
+    case 'openai':
+      return new OpenAIEmbeddingAdapter(llm.baseUrl, llm.apiKey, 'text-embedding-3-small');
+    default:
+      return new OpenAIEmbeddingAdapter(llm.baseUrl, llm.apiKey, 'text-embedding-3-small');
+  }
+}
+
+let llmAdapter: LlmAdapter | null = null;
+let embeddingAdapter: EmbeddingAdapter | null = null;
+
+export function getAdapter(): LlmAdapter {
+  if (!llmAdapter) {
+    llmAdapter = createAdapter();
+    console.log(`[AI] Using provider: ${llmAdapter.provider}`);
+  }
+  return llmAdapter;
+}
+
+function getEmbeddingAdapter(): EmbeddingAdapter {
+  if (!embeddingAdapter) {
+    embeddingAdapter = createEmbeddingAdapter();
+    console.log(`[AI] Using embedding provider: ${embeddingAdapter.provider}`);
+  }
+  return embeddingAdapter;
+}
+
+export function resetAdapter(): void {
+  llmAdapter = null;
+  embeddingAdapter = null;
+}
 
 const MEMORY_PARSE_PROMPT = `你是一个个人记忆助手。用户会给你一段碎片信息，请从中提取结构化数据。
 
@@ -133,90 +503,23 @@ const FACT_EXTRACTION_PROMPT = `你是一个个人事实提取器。请从以下
 如果没有可提取的事实，返回空数组 []。
 只返回 JSON，不要任何额外文字。`;
 
-// ==================== API 调用 ====================
-
 export async function chatCompletion(
   messages: ChatMessage[],
-  temperature = 0.3,
+  temperature = config.llm.temperature,
   retries = 2
 ): Promise<string> {
-  if (!config.doubao.apiKey) {
-    throw new Error('DOUBAO_API_KEY is not set. Please check your .env file.');
-  }
-
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const response = await fetch(`${config.doubao.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.doubao.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: config.doubao.model,
-          messages,
-          temperature,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Doubao API error: ${response.status} - ${errorText}`);
-      }
-
-      const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      return data.choices?.[0]?.message?.content || '';
-    } catch (error) {
-      lastError = error as Error;
-      if (attempt < retries) {
-        console.warn(`[AI] Retry ${attempt + 1}/${retries}...`);
-        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
-      }
-    }
-  }
-
-  throw lastError;
+  return getAdapter().chatCompletion(messages, temperature, retries);
 }
 
 export async function createEmbedding(text: string): Promise<EmbeddingResult> {
-  if (!config.doubao.apiKey) {
-    throw new Error('DOUBAO_API_KEY is not set');
-  }
-
-  const response = await fetch(`${config.doubao.baseUrl}/embeddings`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.doubao.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.doubao.embeddingModel,
-      input: text,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Doubao Embedding API error: ${response.status} - ${errorText}`);
-  }
-
-  const data = (await response.json()) as { data?: Array<{ embedding?: number[] }> };
-  return {
-    vector: data.data?.[0]?.embedding || [],
-  };
+  return getEmbeddingAdapter().createEmbedding(text);
 }
-
-// ==================== 业务封装 ====================
 
 export function extractJson(text: string): any {
   const cleaned = text.replace(/```json\s*|\s*```/g, '').trim();
-  // 尝试直接解析
   try {
     return JSON.parse(cleaned);
   } catch {
-    // 尝试找到第一个 { 或 [ 到最后一个 } 或 ]
     const firstBrace = cleaned.search(/[{[]/);
     const lastBrace = Math.max(cleaned.lastIndexOf('}'), cleaned.lastIndexOf(']'));
     if (firstBrace >= 0 && lastBrace > firstBrace) {
