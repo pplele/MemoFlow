@@ -1,4 +1,5 @@
 import { config } from '../config/index.js';
+import { sanitizeError } from '../utils/index.js';
 
 export type LlmProvider = 'openai' | 'anthropic' | 'gemini' | 'ollama';
 
@@ -190,25 +191,39 @@ class GeminiAdapter implements LlmAdapter {
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const geminiMessages = messages.map((m) => ({
-          role: m.role === 'system' ? 'user' : m.role,
+        const systemMessages = messages.filter(m => m.role === 'system');
+        const userMessages = messages.filter(m => m.role !== 'system');
+        
+        const systemInstruction = systemMessages.length > 0 
+          ? { parts: [{ text: systemMessages.map(m => m.content).join('\n') }] }
+          : undefined;
+
+        const geminiMessages = userMessages.map((m) => ({
+          role: m.role,
           parts: [{ text: m.content }],
         }));
+
+        const body: Record<string, unknown> = {
+          contents: geminiMessages,
+          generationConfig: { temperature },
+        };
+        
+        if (systemInstruction) {
+          body.systemInstruction = systemInstruction;
+        }
 
         const response = await fetch(`${this.baseUrl}/v1/models/${this.model}:generateContent?key=${this.apiKey}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            contents: geminiMessages,
-            generationConfig: { temperature },
-          }),
+          body: JSON.stringify(body),
         });
 
         if (!response.ok) {
           const errorText = await response.text();
-          throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+          const sanitized = sanitizeError(errorText);
+          throw new Error(`Gemini API error: ${response.status} - ${sanitized}`);
         }
 
         const data = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };

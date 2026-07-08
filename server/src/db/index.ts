@@ -251,6 +251,7 @@ export const memoryDb = {
     const tagCount: Record<string, number> = {};
     const entitySet = new Set<string>();
     let weekNew = 0;
+    let relationCount = 0;
 
     for (const m of store.memories) {
       if (m.category) {
@@ -307,11 +308,17 @@ export const memoryDb = {
       .sort((a, b) => b.count - a.count)
       .slice(0, 20);
 
+    for (const f of store.facts) {
+      if (f.attribute === '关系') {
+        relationCount++;
+      }
+    }
+
     return {
       total_memories: store.memories.length,
       week_new: weekNew,
       total_entities: entitySet.size,
-      total_relations: 0,
+      total_relations: relationCount,
       total_facts: store.facts.length,
       category_distribution: categoryDist,
       source_distribution: sourceDist,

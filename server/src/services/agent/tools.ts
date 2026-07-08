@@ -3,6 +3,7 @@ import { semanticSearch, getSimilarMemories } from '../embedding.js';
 import { buildLinkGraph } from '../links.js';
 import { createMemory } from '../memory-parser.js';
 import { decodeFileName } from '../encoding.js';
+import { getExternalTools } from './external-tools.js';
 
 // ==================== 类型定义 ====================
 
@@ -455,14 +456,14 @@ const tools: ToolDefinition[] = [
 
 // ==================== 导出 ====================
 
-/** 获取所有工具定义 */
+/** 获取所有工具定义（内部工具 + 外部工具） */
 export function getTools(): ToolDefinition[] {
-  return tools;
+  return [...tools, ...getExternalTools()];
 }
 
 /** 转为豆包/OpenAI 兼容的 tools 格式 */
 export function getOpenAITools() {
-  return tools.map((t) => ({
+  return getTools().map((t) => ({
     type: 'function' as const,
     function: {
       name: t.name,
@@ -474,7 +475,8 @@ export function getOpenAITools() {
 
 /** 按名称查找并执行工具 */
 export async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
-  const tool = tools.find((t) => t.name === name);
+  const allTools = getTools();
+  const tool = allTools.find((t) => t.name === name);
   if (!tool) {
     return JSON.stringify({ error: `未知工具: ${name}` });
   }

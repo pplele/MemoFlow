@@ -13,6 +13,14 @@ interface FeishuStatus {
   memory_count: number;
 }
 
+interface FeishuConfig {
+  webhookUrl: string;
+  appId: string;
+  appSecret: string;
+  verificationToken: string;
+  notifyChatId: string;
+}
+
 interface AIConfig {
   provider: string;
   apiKey: string;
@@ -115,8 +123,18 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null);
   const [testing, setTesting] = useState(false);
-  const [simulateText, setSimulateText] = useState('');
-  const [simulateResult, setSimulateResult] = useState<string>('');
+  const [feishuConfig, setFeishuConfig] = useState<FeishuConfig>({
+    webhookUrl: '',
+    appId: '',
+    appSecret: '',
+    verificationToken: '',
+    notifyChatId: '',
+  });
+  const [feishuSaving, setFeishuSaving] = useState(false);
+  const [feishuSaveMessage, setFeishuSaveMessage] = useState('');
+  const [feishuTesting, setFeishuTesting] = useState(false);
+  const [feishuTestResult, setFeishuTestResult] = useState<'success' | 'failed' | null>(null);
+  const [feishuTestMessage, setFeishuTestMessage] = useState('');
 
   const [aiConfig, setAiConfig] = useState<AIConfig>({
     provider: 'doubao',
@@ -174,7 +192,17 @@ export default function SettingsPage() {
     try {
       const r = await fetch('/api/feishu/status');
       if (r.ok) {
-        setStatus(await r.json());
+        const data = await r.json();
+        setStatus(data);
+        if (data.config) {
+          setFeishuConfig({
+            webhookUrl: data.config.webhookUrl || '',
+            appId: data.config.appId || '',
+            appSecret: data.config.appSecret || '',
+            verificationToken: data.config.verificationToken || '',
+            notifyChatId: data.config.notifyChatId || '',
+          });
+        }
       }
     } finally {
       setLoading(false);
@@ -222,24 +250,58 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSimulate = async () => {
-    if (!simulateText.trim()) return;
-    setSimulateResult('发送中...');
+  const handleFeishuSave = async () => {
+    setFeishuSaving(true);
+    setFeishuSaveMessage('');
     try {
-      const r = await fetch('/api/feishu/simulate', {
+      const r = await fetch('/api/feishu/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: simulateText }),
+        body: JSON.stringify(feishuConfig),
       });
       const data = await r.json();
       if (r.ok) {
-        setSimulateResult(`✓ 已创建记忆 ${data.memory.id}`);
-        setSimulateText('');
+        setFeishuSaveMessage(data.message);
+        if (feishuConfig.appSecret) {
+          setFeishuConfig(prev => ({ ...prev, appSecret: '***' }));
+        }
+        fetchStatus();
       } else {
-        setSimulateResult(`✗ 失败: ${data.error || '未知错误'}`);
+        setFeishuSaveMessage(`保存失败: ${data.message}`);
       }
     } catch (err: any) {
-      setSimulateResult(`✗ 异常: ${err.message}`);
+      setFeishuSaveMessage(`保存异常: ${err.message}`);
+    } finally {
+      setFeishuSaving(false);
+    }
+  };
+
+  const handleFeishuTest = async () => {
+    setFeishuTesting(true);
+    setFeishuTestResult(null);
+    setFeishuTestMessage('');
+    try {
+      const r = await fetch('/api/feishu/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appId: feishuConfig.appId,
+          appSecret: feishuConfig.appSecret === '***' ? '' : feishuConfig.appSecret,
+        }),
+      });
+      const data = await r.json();
+      if (r.ok || data.success) {
+        setFeishuTestResult('success');
+        setFeishuTestMessage(data.message);
+      } else {
+        setFeishuTestResult('failed');
+        setFeishuTestMessage(data.message || '连接失败');
+      }
+    } catch (err: any) {
+      setFeishuTestResult('failed');
+      setFeishuTestMessage(err.message || '网络异常');
+    } finally {
+      setFeishuTesting(false);
     }
   };
 
@@ -667,93 +729,123 @@ export default function SettingsPage() {
             <h2 className="text-lg font-semibold">飞书机器人集成</h2>
           </div>
 
-          {loading ? (
-            <div className="text-text-tertiary text-sm">加载中...</div>
-          ) : status ? (
-            <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
-                <ConfigItem
-                  label="Webhook URL"
-                  configured={status.configured.webhook_url}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-text-tertiary mb-1">App ID</label>
+                <input
+                  type="text"
+                  value={feishuConfig.appId}
+                  onChange={(e) => setFeishuConfig(prev => ({ ...prev, appId: e.target.value }))}
+                  placeholder="cli_xxx"
+                  className="w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent/50 font-mono"
                 />
-                <ConfigItem
-                  label="App ID"
-                  configured={status.configured.app_id}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-tertiary mb-1">App Secret</label>
+                <input
+                  type="password"
+                  value={feishuConfig.appSecret}
+                  onChange={(e) => setFeishuConfig(prev => ({ ...prev, appSecret: e.target.value }))}
+                  placeholder="your-app-secret"
+                  className="w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent/50 font-mono"
                 />
-                <ConfigItem
-                  label="App Secret"
-                  configured={status.configured.app_secret}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-text-tertiary mb-1">Webhook URL（可选）</label>
+                <input
+                  type="text"
+                  value={feishuConfig.webhookUrl}
+                  onChange={(e) => setFeishuConfig(prev => ({ ...prev, webhookUrl: e.target.value }))}
+                  placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+                  className="w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent/50 font-mono"
                 />
-                <ConfigItem
-                  label="Verification Token"
-                  configured={status.configured.verification_token}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-tertiary mb-1">Verification Token（可选）</label>
+                <input
+                  type="text"
+                  value={feishuConfig.verificationToken}
+                  onChange={(e) => setFeishuConfig(prev => ({ ...prev, verificationToken: e.target.value }))}
+                  placeholder="用于 Webhook 验证"
+                  className="w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent/50 font-mono"
                 />
-                <div className="rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-xs">
-                  <div className="text-text-tertiary mb-1">通知群 ID</div>
-                  <div className="font-mono text-text-primary">
-                    {status.configured.notify_chat_id || '(未配置)'}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-text-tertiary mb-1">通知群 ID（可选）</label>
+              <input
+                type="text"
+                value={feishuConfig.notifyChatId}
+                onChange={(e) => setFeishuConfig(prev => ({ ...prev, notifyChatId: e.target.value }))}
+                placeholder="oc_xxx"
+                className="w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent/50 font-mono"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleFeishuTest}
+                disabled={feishuTesting || !feishuConfig.appId || !feishuConfig.appSecret || feishuConfig.appSecret === '***'}
+                className="flex items-center gap-1.5 rounded-md border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs text-accent hover:bg-accent/20 disabled:opacity-50"
+              >
+                <Send className="h-3.5 w-3.5" />
+                {feishuTesting ? '测试中...' : '测试连接'}
+              </button>
+              {feishuTestResult === 'success' && (
+                <span className="flex items-center gap-1 text-xs text-green-400">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> {feishuTestMessage}
+                </span>
+              )}
+              {feishuTestResult === 'failed' && (
+                <span className="flex items-center gap-1 text-xs text-red-400">
+                  <XCircle className="h-3.5 w-3.5" /> {feishuTestMessage}
+                </span>
+              )}
+            </div>
+
+            <button
+              onClick={handleFeishuSave}
+              disabled={feishuSaving}
+              className="w-full rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-50"
+            >
+              {feishuSaving ? '保存中...' : '保存配置'}
+            </button>
+            {feishuSaveMessage && (
+              <p className="mt-2 text-xs text-text-secondary text-center">{feishuSaveMessage}</p>
+            )}
+
+            {loading ? (
+              <div className="text-text-tertiary text-xs mt-2">加载状态...</div>
+            ) : status ? (
+              <div className="mt-4 pt-4 border-t border-border-primary">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    {status.configured.app_id ? (
+                      <><CheckCircle2 className="h-3 w-3 text-green-400" /><span className="text-green-400">App ID 已配置</span></>
+                    ) : (
+                      <><XCircle className="h-3 w-3 text-text-tertiary" /><span className="text-text-tertiary">App ID 未配置</span></>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {status.configured.app_secret ? (
+                      <><CheckCircle2 className="h-3 w-3 text-green-400" /><span className="text-green-400">App Secret 已配置</span></>
+                    ) : (
+                      <><XCircle className="h-3 w-3 text-text-tertiary" /><span className="text-text-tertiary">App Secret 未配置</span></>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-text-tertiary">已入库记忆: {status.memory_count} 条</span>
                   </div>
                 </div>
-                <div className="rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-xs">
-                  <div className="text-text-tertiary mb-1">已入库记忆</div>
-                  <div className="font-mono text-text-primary">{status.memory_count} 条</div>
-                </div>
               </div>
+            ) : null}
 
-              <div className="flex flex-wrap items-center gap-2 mb-4">
-                <button
-                  onClick={handleTest}
-                  disabled={testing || !status.configured.webhook_url}
-                  className="flex items-center gap-1.5 rounded-md border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs text-accent hover:bg-accent/20 disabled:opacity-50"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  {testing ? '发送中...' : '发送测试消息'}
-                </button>
-                {testResult === 'success' && (
-                  <span className="flex items-center gap-1 text-xs text-green-400">
-                    <CheckCircle2 className="h-3.5 w-3.5" /> 发送成功
-                  </span>
-                )}
-                {testResult === 'failed' && (
-                  <span className="flex items-center gap-1 text-xs text-red-400">
-                    <XCircle className="h-3.5 w-3.5" /> 发送失败（检查 Webhook URL）
-                  </span>
-                )}
-              </div>
-
-              <div className="border-t border-border-primary pt-4">
-                <div className="flex items-center gap-1.5 mb-2 text-xs font-medium text-text-tertiary">
-                  <MessageSquare className="h-3.5 w-3.5" />
-                  <span>本地模拟器（无需真实飞书账号）</span>
-                </div>
-                <p className="text-xs text-text-tertiary mb-3">
-                  模拟一条飞书消息，验证消息→记忆的端到端流程
-                </p>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={simulateText}
-                    onChange={(e) => setSimulateText(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSimulate()}
-                    placeholder="输入要模拟的消息内容..."
-                    className="flex-1 rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent/50"
-                  />
-                  <button
-                    onClick={handleSimulate}
-                    disabled={!simulateText.trim()}
-                    className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-50"
-                  >
-                    模拟
-                  </button>
-                </div>
-                {simulateResult && (
-                  <p className="mt-2 text-xs font-mono text-text-secondary">{simulateResult}</p>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="text-red-400 text-sm">加载状态失败</div>
-          )}
+            </div>
         </div>
 
         <div className="mt-6 rounded-xl border border-border-primary bg-bg-secondary p-6">

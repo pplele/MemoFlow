@@ -1,8 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { parseMessage, verifyToken, sendTextToWebhook, isNotifyEnabled, FeishuEventPayload } from '../services/feishu.js';
+import { parseMessage, verifyToken, sendTextToWebhook, isNotifyEnabled, FeishuEventPayload, startFeishuLongConnection } from '../services/feishu.js';
 import { createMemory } from '../services/memory-parser.js';
 import { memoryDb } from '../db/index.js';
 import { config } from '../config/index.js';
+import { updateEnvFile } from '../utils/env-writer.js';
 
 const router = Router();
 
@@ -71,6 +72,13 @@ router.get('/status', async (_req: Request, res: Response) => {
       verification_token: !!config.feishu.verificationToken,
       notify_chat_id: config.feishu.notifyChatId || null,
     },
+    config: {
+      webhookUrl: config.feishu.webhookUrl || '',
+      appId: config.feishu.appId || '',
+      appSecret: config.feishu.appSecret ? '***' : '',
+      verificationToken: config.feishu.verificationToken || '',
+      notifyChatId: config.feishu.notifyChatId || '',
+    },
     memory_count: memoryDb.all().length,
   });
 });
@@ -122,6 +130,119 @@ router.post('/simulate', async (req: Request, res: Response, next: NextFunction)
     });
   } catch (error) {
     next(error);
+  }
+});
+
+/**
+ * POST /feishu/config
+ * 保存飞书配置
+ * body: { webhookUrl?: string, appId?: string, appSecret?: string, verificationToken?: string, notifyChatId?: string }
+ */
+router.post('/config', async (req: Request, res: Response) => {
+  try {
+    const { webhookUrl, appId, appSecret, verificationToken, notifyChatId } = req.body || {};
+
+    if (webhookUrl !== undefined) {
+      process.env.FEISHU_WEBHOOK_URL = webhookUrl;
+      updateEnvFile('FEISHU_WEBHOOK_URL', webhookUrl);
+    }
+    if (appId !== undefined) {
+      process.env.FEISHU_APP_ID = appId;
+      updateEnvFile('FEISHU_APP_ID', appId);
+    }
+    if (appSecret !== undefined && appSecret !== '***') {
+      process.env.FEISHU_APP_SECRET = appSecret;
+      updateEnvFile('FEISHU_APP_SECRET', appSecret);
+    }
+    if (verificationToken !== undefined) {
+      process.env.FEISHU_VERIFICATION_TOKEN = verificationToken;
+      updateEnvFile('FEISHU_VERIFICATION_TOKEN', verificationToken);
+    }
+    if (notifyChatId !== undefined) {
+      process.env.FEISHU_NOTIFY_CHAT_ID = notifyChatId;
+      updateEnvFile('FEISHU_NOTIFY_CHAT_ID', notifyChatId);
+    }
+
+    if (process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET) {
+      startFeishuLongConnection();
+    }
+
+    res.json({
+      success: true,
+      message: '飞书配置已保存',
+      configured: {
+        webhook_url: !!process.env.FEISHU_WEBHOOK_URL,
+        app_id: !!process.env.FEISHU_APP_ID,
+        app_secret: !!process.env.FEISHU_APP_SECRET,
+        verification_token: !!process.env.FEISHU_VERIFICATION_TOKEN,
+        notify_chat_id: process.env.FEISHU_NOTIFY_CHAT_ID || null,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : '保存失败',
+    });
+  }
+});
+
+const FEISHU_ERROR_MAP: Record<number | string, string> = {
+  10011: 'App ID 或 App Secret 错误，请检查凭证',
+  90002: '服务暂时不可用，请稍后重试',
+  40003: '权限不足，请在飞书后台开通相关权限',
+  40001: '无效的请求参数',
+  10000: '系统错误，请稍后重试',
+};
+
+function mapFeishuError(code: number | string | undefined): string {
+  if (code === undefined) return '未知错误';
+  return FEISHU_ERROR_MAP[code] || `错误码 ${code}，请查看飞书开发者文档`;
+}
+
+/**
+ * POST /feishu/test-connection
+ * 测试飞书长连接配置（使用 App ID 和 App Secret）
+ */
+router.post('/test-connection', async (req: Request, res: Response) => {
+  try {
+    const { appId, appSecret } = req.body || {};
+    
+    if (!appId || !appSecret) {
+      return res.status(400).json({ success: false, message: 'App ID 和 App Secret 不能为空' });
+    }
+
+    try {
+      const response = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+      });
+      const result = (await response.json()) as Record<string, unknown>;
+      
+      const code = result.code as number;
+      if (code === 0) {
+        res.json({ 
+          success: true, 
+          message: '飞书连接测试成功',
+        });
+      } else {
+        res.status(400).json({ 
+          success: false, 
+          message: mapFeishuError(code) 
+        });
+      }
+    } catch (err: any) {
+      const errorCode = err?.code || err?.response?.status;
+      res.status(400).json({ 
+        success: false, 
+        message: mapFeishuError(errorCode) 
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : '测试失败',
+    });
   }
 });
 

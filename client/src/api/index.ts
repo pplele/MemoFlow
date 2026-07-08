@@ -1,11 +1,24 @@
 const BASE_URL = '/api';
 
+let apiToken: string | null = null;
+
+export function setApiToken(token: string): void {
+  apiToken = token;
+}
+
+export function getApiToken(): string | null {
+  return apiToken;
+}
+
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
-  // FormData 上传时不设置 Content-Type，让浏览器自动添加 multipart boundary
   const isFormData = options.body instanceof FormData;
   const headers: Record<string, string> = { ...((options.headers as Record<string, string>) || {}) };
   if (!isFormData && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
+  }
+  
+  if (apiToken) {
+    headers['Authorization'] = `Bearer ${apiToken}`;
   }
 
   const res = await fetch(`${BASE_URL}${url}`, {

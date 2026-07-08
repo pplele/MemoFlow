@@ -1,9 +1,9 @@
 import crypto from 'crypto';
+import * as Lark from '@larksuiteoapi/node-sdk';
 import { config } from '../config/index.js';
+import { runAgent, AgentStreamEvent } from './agent/loop.js';
+import { createMemory } from './memory-parser.js';
 
-/**
- * 飞书事件订阅的消息体结构
- */
 export interface FeishuEventPayload {
   challenge?: string;
   token?: string;
@@ -21,7 +21,7 @@ export interface FeishuEventPayload {
       chat_id?: string;
       chat_type?: 'p2p' | 'group';
       message_type?: 'text' | 'post' | 'image' | 'file';
-      content?: string; // JSON string
+      content?: string;
       mentions?: Array<{ key: string; id?: { open_id?: string } }>;
     };
   };
@@ -36,16 +36,16 @@ export interface FeishuParsedMessage {
   raw: FeishuEventPayload;
 }
 
-/** 验证事件 token 是否匹配（首次验证时跳过） */
+let wsClient: InstanceType<typeof Lark.WSClient> | null = null;
+let activeFeishuChats = new Set<string>();
+
 export function verifyToken(token: string | undefined): boolean {
   if (!config.feishu.verificationToken) {
-    // 未配置 token 时跳过验证（开发模式）
     return true;
   }
   return token === config.feishu.verificationToken;
 }
 
-/** 解析事件回调，提取可用的消息文本 */
 export function parseMessage(payload: FeishuEventPayload): FeishuParsedMessage | null {
   if (!payload?.event?.message) return null;
   const m = payload.event.message;
@@ -55,7 +55,6 @@ export function parseMessage(payload: FeishuEventPayload): FeishuParsedMessage |
     if (m.message_type === 'text' && typeof content.text === 'string') {
       text = content.text;
     } else if (m.message_type === 'post' && content.content) {
-      // post 消息：content.content 是 [[{tag, text}], ...] 结构
       const parts: string[] = [];
       for (const para of content.content || []) {
         for (const node of para || []) {
@@ -76,7 +75,6 @@ export function parseMessage(payload: FeishuEventPayload): FeishuParsedMessage |
     return null;
   }
 
-  // 去掉 @ 机器人 的提及标记
   if (m.mentions) {
     for (const mention of m.mentions) {
       text = text.split(mention.key).join('');
@@ -96,7 +94,6 @@ export function parseMessage(payload: FeishuEventPayload): FeishuParsedMessage |
   };
 }
 
-/** 飞书自定义机器人 webhook 签名（用于主动发消息） */
 export function signWebhookPayload(
   secret: string,
   timestamp: number = Math.floor(Date.now() / 1000)
@@ -106,10 +103,6 @@ export function signWebhookPayload(
   return hmac.digest('base64');
 }
 
-/**
- * 主动发送文本消息到飞书群（通过 incoming webhook）
- * 如果未配置 webhookUrl 则直接返回 false，不抛错
- */
 export async function sendTextToWebhook(text: string): Promise<boolean> {
   if (!config.feishu.webhookUrl) {
     console.warn('[Feishu] FEISHU_WEBHOOK_URL not configured, skipping');
@@ -140,7 +133,138 @@ export async function sendTextToWebhook(text: string): Promise<boolean> {
   }
 }
 
-/** 通知配置：当前是否启用了主动推送 */
+export async function sendTextToChat(chatId: string, text: string): Promise<boolean> {
+  if (!config.feishu.appId || !config.feishu.appSecret) {
+    console.error('[Feishu] App ID or App Secret not configured');
+    return false;
+  }
+  try {
+    const client = new Lark.Client({
+      appId: config.feishu.appId,
+      appSecret: config.feishu.appSecret,
+    });
+    const res = await client.im.v1.message.create({
+      params: {
+        receive_id_type: 'chat_id',
+      },
+      data: {
+        receive_id: chatId,
+        content: JSON.stringify({ text }),
+        msg_type: 'text',
+      },
+    });
+    return res.code === 0;
+  } catch (err) {
+    console.error('[Feishu] Send message failed:', (err as Error).message);
+    return false;
+  }
+}
+
+export async function handleFeishuMessage(parsed: FeishuParsedMessage): Promise<void> {
+  const { chatId, text, chatType } = parsed;
+
+  console.log(`[Feishu] Received message from ${chatType} chat ${chatId}: ${text}`);
+
+  if (chatType === 'group' && !text.includes('@')) {
+    console.log('[Feishu] Group message without @, ignoring');
+    return;
+  }
+
+  if (activeFeishuChats.has(chatId)) {
+    console.log(`[Feishu] Chat ${chatId} already has active session`);
+    await sendTextToChat(chatId, '请等待上一条消息处理完成');
+    return;
+  }
+
+  activeFeishuChats.add(chatId);
+  let fullResponse = '';
+
+  try {
+    await createMemory({
+      content: text,
+      source: 'feishu',
+      type: 'text',
+    });
+
+    const emit = (event: AgentStreamEvent) => {
+      if (event.type === 'thought') return;
+      if (event.type === 'tool_result') return;
+      if (event.type === 'error') {
+        fullResponse += `\n错误: ${event.data}`;
+      } else if (typeof event.data === 'string') {
+        fullResponse += event.data;
+      }
+    };
+
+    await runAgent(text.trim(), [], emit);
+
+    if (fullResponse.length > 0) {
+      await sendTextToChat(chatId, fullResponse);
+    } else {
+      await sendTextToChat(chatId, '抱歉，我暂时无法回答这个问题');
+    }
+  } catch (err) {
+    console.error('[Feishu] Agent processing failed:', (err as Error).message);
+    await sendTextToChat(chatId, `处理失败: ${(err as Error).message}`);
+  } finally {
+    activeFeishuChats.delete(chatId);
+  }
+}
+
+export function startFeishuLongConnection(): void {
+  if (!config.feishu.appId || !config.feishu.appSecret) {
+    console.warn('[Feishu] App ID or App Secret not configured, skipping long connection');
+    return;
+  }
+
+  try {
+    wsClient = new Lark.WSClient({
+      appId: config.feishu.appId,
+      appSecret: config.feishu.appSecret,
+    });
+
+    const eventDispatcher = new Lark.EventDispatcher({}).register({
+      'im.message.receive_v1': async (data: any) => {
+        const eventData = data?.event || data;
+        const msg = eventData.message || {};
+        const payload: FeishuEventPayload = {
+          type: 'event_callback',
+          event: {
+            type: 'message',
+            sender: {
+              sender_id: {
+                open_id: eventData.sender?.sender_id?.open_id,
+                user_id: eventData.sender?.sender_id?.user_id,
+              },
+              sender_type: eventData.sender?.sender_type,
+            },
+            message: {
+              message_id: msg.message_id,
+              chat_id: msg.chat_id,
+              chat_type: msg.chat_type === 'group' ? 'group' : 'p2p',
+              message_type: msg.message_type,
+              content: msg.content,
+              mentions: msg.mentions?.map((m: any) => ({
+                key: m.key,
+                id: { open_id: m.id?.open_id },
+              })),
+            },
+          },
+        };
+        const parsed = parseMessage(payload);
+        if (parsed) {
+          handleFeishuMessage(parsed).catch(console.error);
+        }
+      },
+    });
+
+    wsClient.start({ eventDispatcher });
+    console.log('[Feishu] Long connection started successfully');
+  } catch (err) {
+    console.error('[Feishu] Failed to start long connection:', (err as Error).message);
+  }
+}
+
 export function isNotifyEnabled(): boolean {
   return !!config.feishu.webhookUrl || !!config.feishu.appId;
 }

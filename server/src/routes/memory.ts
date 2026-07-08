@@ -57,6 +57,10 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       return res.status(400).json({ error: 'content is required and must be a non-empty string' });
     }
 
+    if (content.length > 50000) {
+      return res.status(400).json({ error: '输入内容过长，最大支持 50000 字符（约 10000 汉字）' });
+    }
+
     const result = await createMemory({
       content: content.trim(),
       source: source || 'web',
