@@ -409,20 +409,20 @@ export const factDb = {
   },
 };
 
-export function closeDb() {
+export async function closeDb() {
   if (saveTimer) {
     clearInterval(saveTimer);
     saveTimer = null;
   }
-  saveToDisk();
+  await saveToDisk();
 }
 
-process.on('SIGINT', () => {
-  closeDb();
+process.on('SIGINT', async () => {
+  await closeDb();
   process.exit(0);
 });
 
-process.on('SIGTERM', () => {
-  closeDb();
+process.on('SIGTERM', async () => {
+  await closeDb();
   process.exit(0);
 });
