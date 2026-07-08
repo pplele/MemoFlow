@@ -29,7 +29,7 @@ interface AIConfig {
 }
 
 const DEFAULT_CONFIGS: Record<string, { baseUrl: string; model: string }> = {
-  deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash' },
+  deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash' },
   qwen: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen3-8b-chat' },
   mimo: { baseUrl: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2.5-pro' },
   doubao: { baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-seed-1-6-251015' },
@@ -96,16 +96,18 @@ router.post('/ai-config', async (req: Request, res: Response) => {
     
     const existingConfig = providerConfigs[provider] || {};
     
-    const shouldUpdateApiKey = body.updateApiKey === true;
-    const newApiKey = shouldUpdateApiKey ? body.apiKey : existingConfig.apiKey;
-    
-    if (newApiKey) {
-      providerConfigs[provider] = {
-        apiKey: newApiKey,
-        baseUrl: body.baseUrl || DEFAULT_CONFIGS[provider]?.baseUrl || '',
-        model: body.model || DEFAULT_CONFIGS[provider]?.model || '',
-      };
+    let newApiKey = existingConfig.apiKey;
+    if (body.updateApiKey === true && body.apiKey && body.apiKey !== '***') {
+      newApiKey = body.apiKey;
+    } else if (!existingConfig.apiKey && body.apiKey && body.apiKey !== '***') {
+      newApiKey = body.apiKey;
     }
+    
+    providerConfigs[provider] = {
+      apiKey: newApiKey || '',
+      baseUrl: body.baseUrl || DEFAULT_CONFIGS[provider]?.baseUrl || '',
+      model: body.model || DEFAULT_CONFIGS[provider]?.model || '',
+    };
     
     const configsStr = saveProviderConfigs(providerConfigs);
     updateEnvFile('PROVIDER_CONFIGS', configsStr);
@@ -217,6 +219,13 @@ router.post('/ai-config/test', async (req: Request, res: Response) => {
       apiKey = providerConfigs[body.provider]?.apiKey || '';
     }
     
+    if (!apiKey) {
+      return res.status(400).json({
+        success: false,
+        message: 'API Key 不能为空',
+      });
+    }
+    
     if (body.provider === 'ollama') {
       testUrl = `${body.ollamaBaseUrl}/api/chat`;
       bodyData = {
@@ -239,7 +248,15 @@ router.post('/ai-config/test', async (req: Request, res: Response) => {
         contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
       };
     } else {
-      testUrl = `${body.baseUrl}/chat/completions`;
+      let baseUrl = body.baseUrl;
+      if (!baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v3')) {
+        if (baseUrl.endsWith('/')) {
+          baseUrl += 'v1';
+        } else {
+          baseUrl += '/v1';
+        }
+      }
+      testUrl = `${baseUrl}/chat/completions`;
       headers['Authorization'] = `Bearer ${apiKey}`;
       bodyData = {
         model: body.model,
@@ -261,9 +278,29 @@ router.post('/ai-config/test', async (req: Request, res: Response) => {
       timeout,
     ]) as unknown as globalThis.Response;
     
+    const responseText = await response.text();
+    
     if (!response.ok) {
-      const result = await response.json();
-      throw new Error((result as any).error?.message || `HTTP ${response.status}`);
+      let errorMessage = `HTTP ${response.status}`;
+      if (responseText) {
+        try {
+          const result = JSON.parse(responseText);
+          errorMessage = (result as any).error?.message || (result as any).message || errorMessage;
+        } catch {
+          errorMessage = responseText.slice(0, 200) || errorMessage;
+        }
+      }
+      throw new Error(errorMessage);
+    }
+    
+    if (!responseText) {
+      throw new Error('服务器返回空响应');
+    }
+    
+    try {
+      JSON.parse(responseText);
+    } catch {
+      throw new Error('服务器返回非 JSON 响应');
     }
     
     res.json({

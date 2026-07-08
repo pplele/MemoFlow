@@ -54,3 +54,9 @@ coverage/
 *.local
 .cache/
 .temp/
+
+# Claude AI
+.claude/
+
+# Build artifacts
+*.zip

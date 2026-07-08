@@ -1,4 +1,5 @@
 import type { AgentStreamEvent } from '@/types';
+import { getApiToken } from './index';
 
 interface AgentChatOptions {
   message: string;
@@ -14,7 +15,10 @@ export async function agentChat(options: AgentChatOptions): Promise<void> {
   try {
     const response = await fetch('/api/agent/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getApiToken() || ''}`,
+      },
       body: JSON.stringify({ message, history: history || [] }),
     });
 

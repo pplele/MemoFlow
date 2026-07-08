@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import * as http from 'http';
 import { config } from './config/index.js';
 import { initDb } from './db/index.js';
 import memoryRoutes from './routes/memory.js';
@@ -73,6 +74,8 @@ async function start() {
     await initDb();
     console.log('[DB] Database initialized');
 
+    const token = generateApiToken();
+
     if (config.vault.watchEnabled) {
       startVaultWatcher();
       console.log('[Vault] File watcher started');
@@ -80,9 +83,18 @@ async function start() {
 
     startFeishuLongConnection();
 
-    const token = generateApiToken();
+    const httpServer = http.createServer(app);
+    httpServer.on('error', (error: any) => {
+      if (error.code === 'EADDRINUSE') {
+        console.log(`[Server] Port ${config.port} is busy, waiting for release...`);
+        setTimeout(() => {
+          httpServer.close();
+          httpServer.listen(config.port);
+        }, 1000);
+      }
+    });
 
-    app.listen(config.port, () => {
+    httpServer.listen(config.port, () => {
       console.log(`[Server] MemoFlow server running on http://localhost:${config.port}`);
       console.log(`[Server] Environment: ${config.nodeEnv}`);
       console.log(`[Vault] Path: ${config.vault.path}`);

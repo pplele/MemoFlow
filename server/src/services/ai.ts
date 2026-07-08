@@ -67,6 +67,18 @@ function detectProvider(baseUrl: string): LlmProvider {
   return 'openai';
 }
 
+function normalizeBaseUrl(baseUrl: string): string {
+  let url = baseUrl;
+  if (!url.endsWith('/v1') && !url.endsWith('/v3')) {
+    if (url.endsWith('/')) {
+      url += 'v1';
+    } else {
+      url += '/v1';
+    }
+  }
+  return url;
+}
+
 class OpenAIAdapter implements LlmAdapter {
   provider: LlmProvider = 'openai';
   baseUrl: string;
@@ -74,7 +86,7 @@ class OpenAIAdapter implements LlmAdapter {
   model: string;
 
   constructor(baseUrl: string, apiKey: string, model: string) {
-    this.baseUrl = baseUrl;
+    this.baseUrl = normalizeBaseUrl(baseUrl);
     this.apiKey = apiKey;
     this.model = model;
   }
@@ -318,7 +330,7 @@ class OpenAIEmbeddingAdapter implements EmbeddingAdapter {
   private model: string;
 
   constructor(baseUrl: string, apiKey: string, model: string) {
-    this.baseUrl = baseUrl;
+    this.baseUrl = normalizeBaseUrl(baseUrl);
     this.apiKey = apiKey;
     this.model = model;
   }

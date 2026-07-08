@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 let envWriteLock = false;
 
@@ -9,7 +10,8 @@ export async function updateEnvFile(key: string, value: string): Promise<void> {
   }
   envWriteLock = true;
   try {
-    const projectRoot = path.resolve(__dirname, '../../');
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const projectRoot = path.resolve(__dirname, '../../../');
     const envPath = path.join(projectRoot, '.env');
     
     let envContent = '';

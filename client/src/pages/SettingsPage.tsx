@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Bot, CheckCircle2, XCircle, Send, Settings as SettingsIcon, MessageSquare, Cloud, Server, ChevronRight } from 'lucide-react';
+import { getApiToken } from '../api/index';
 
 interface FeishuStatus {
   enabled: boolean;
@@ -47,7 +48,7 @@ const PROVIDERS = [
 
 const EMBEDDING_PRESETS: Record<string, { model: string; baseUrl: string; description?: string }[]> = {
   deepseek: [
-    { model: 'deepseek-embedding', baseUrl: 'https://api.deepseek.com', description: 'DeepSeek 嵌入模型' },
+    { model: 'deepseek-embedding', baseUrl: 'https://api.deepseek.com/v1', description: 'DeepSeek 嵌入模型' },
   ],
   qwen: [
     { model: 'text-embedding-v3', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', description: '通义千问嵌入' },
@@ -65,10 +66,10 @@ const EMBEDDING_PRESETS: Record<string, { model: string; baseUrl: string; descri
 
 const MODEL_PRESETS: Record<string, { model: string; baseUrl: string; description?: string }[]> = {
   deepseek: [
-    { model: 'deepseek-v4-flash', baseUrl: 'https://api.deepseek.com', description: '高速低成本，推荐' },
-    { model: 'deepseek-v4-pro', baseUrl: 'https://api.deepseek.com', description: '旗舰推理模型' },
-    { model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com', description: '旧版（2026年7月停用）' },
-    { model: 'deepseek-reasoner', baseUrl: 'https://api.deepseek.com', description: '旧版推理（2026年7月停用）' },
+    { model: 'deepseek-v4-flash', baseUrl: 'https://api.deepseek.com/v1', description: '高速低成本，推荐' },
+    { model: 'deepseek-v4-pro', baseUrl: 'https://api.deepseek.com/v1', description: '旗舰推理模型' },
+    { model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1', description: '旧版（2026年7月停用）' },
+    { model: 'deepseek-reasoner', baseUrl: 'https://api.deepseek.com/v1', description: '旧版推理（2026年7月停用）' },
   ],
   qwen: [
     { model: 'qwen3-8b-chat', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', description: '8B 参数' },
@@ -111,7 +112,7 @@ const MODEL_PRESETS: Record<string, { model: string; baseUrl: string; descriptio
 };
 
 const DEFAULT_CONFIGS: Record<string, { baseUrl: string; model: string }> = {
-  deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash' },
+  deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash' },
   qwen: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen3-8b-chat' },
   mimo: { baseUrl: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2.5-pro' },
   doubao: { baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-seed-1-6-251015' },
@@ -156,6 +157,7 @@ export default function SettingsPage() {
   const [aiTestMessage, setAiTestMessage] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
   const [activeTab, setActiveTab] = useState<'ai-cloud' | 'ai-local'>('ai-cloud');
+  const providerSwitchRef = useRef(false);
 
   useEffect(() => {
     fetchStatus();
@@ -163,13 +165,18 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
+    // 由 handleProviderSwitch 触发时跳过，避免覆盖服务端返回的已保存配置
+    if (providerSwitchRef.current) {
+      providerSwitchRef.current = false;
+      return;
+    }
     const presets = MODEL_PRESETS[aiConfig.provider];
-    if (presets && presets.length > 0) {
+    if (presets && presets.length > 0 && !aiConfig.providersWithConfig[aiConfig.provider]) {
       setAiConfig(prev => ({
         ...prev,
         model: presets[0].model,
         baseUrl: presets[0].baseUrl,
-        apiKey: prev.providersWithConfig[prev.provider] ? '***' : '',
+        apiKey: '',
       }));
     }
   }, [aiConfig.provider]);
@@ -190,7 +197,9 @@ export default function SettingsPage() {
   const fetchStatus = async () => {
     setLoading(true);
     try {
-      const r = await fetch('/api/feishu/status');
+      const r = await fetch('/api/feishu/status', {
+        headers: { 'Authorization': `Bearer ${getApiToken() || ''}` },
+      });
       if (r.ok) {
         const data = await r.json();
         setStatus(data);
@@ -211,7 +220,9 @@ export default function SettingsPage() {
 
   const fetchAIConfig = async () => {
     try {
-      const r = await fetch('/api/ai-config');
+      const r = await fetch('/api/ai-config', {
+        headers: { 'Authorization': `Bearer ${getApiToken() || ''}` },
+      });
       if (r.ok) {
         const config = await r.json();
         const providersWithConfig = config.providersWithConfig || {};
@@ -241,7 +252,10 @@ export default function SettingsPage() {
     setTesting(true);
     setTestResult(null);
     try {
-      const r = await fetch('/api/feishu/test', { method: 'POST' });
+      const r = await fetch('/api/feishu/test', { 
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${getApiToken() || ''}` },
+      });
       setTestResult(r.ok ? 'success' : 'failed');
     } catch {
       setTestResult('failed');
@@ -256,7 +270,10 @@ export default function SettingsPage() {
     try {
       const r = await fetch('/api/feishu/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getApiToken() || ''}`,
+        },
         body: JSON.stringify(feishuConfig),
       });
       const data = await r.json();
@@ -283,7 +300,10 @@ export default function SettingsPage() {
     try {
       const r = await fetch('/api/feishu/test-connection', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getApiToken() || ''}`,
+        },
         body: JSON.stringify({
           appId: feishuConfig.appId,
           appSecret: feishuConfig.appSecret === '***' ? '' : feishuConfig.appSecret,
@@ -316,16 +336,25 @@ export default function SettingsPage() {
       
       const r = await fetch('/api/ai-config/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getApiToken() || ''}`,
+        },
         body: JSON.stringify(configToTest),
       });
-      const data = await r.json();
+      const responseText = await r.text();
+      let data: any;
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        data = {};
+      }
       if (r.ok) {
         setAiTestResult('success');
-        setAiTestMessage(data.message);
+        setAiTestMessage(data.message || '连接成功');
       } else {
         setAiTestResult('failed');
-        setAiTestMessage(data.message || '连接失败');
+        setAiTestMessage(data.message || responseText.slice(0, 200) || '连接失败');
       }
     } catch (err: any) {
       setAiTestResult('failed');
@@ -336,10 +365,14 @@ export default function SettingsPage() {
   };
 
   const handleProviderSwitch = async (provider: string) => {
+    providerSwitchRef.current = true;
     try {
       const r = await fetch('/api/ai-config/switch', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getApiToken() || ''}`,
+        },
         body: JSON.stringify({ provider }),
       });
       const data = await r.json();
@@ -378,12 +411,21 @@ export default function SettingsPage() {
       };
       const r = await fetch('/api/ai-config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getApiToken() || ''}`,
+        },
         body: JSON.stringify(configToSave),
       });
-      const data = await r.json();
+      const responseText = await r.text();
+      let data: any;
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        data = {};
+      }
       if (r.ok) {
-        setSaveMessage(data.message);
+        setSaveMessage(data.message || '配置已保存');
         if (data.providersWithConfig) {
           setAiConfig(prev => ({ ...prev, providersWithConfig: data.providersWithConfig }));
         }
@@ -394,7 +436,7 @@ export default function SettingsPage() {
           setAiConfig(prev => ({ ...prev, embeddingApiKey: '***' }));
         }
       } else {
-        setSaveMessage(`保存失败: ${data.message}`);
+        setSaveMessage(`保存失败: ${data.message || responseText.slice(0, 200) || '未知错误'}`);
       }
     } catch (err: any) {
       setSaveMessage(`保存异常: ${err.message}`);
@@ -447,7 +489,11 @@ export default function SettingsPage() {
                 <label className="block text-xs font-medium text-text-tertiary mb-1">API 提供商</label>
                 <select
                   value={aiConfig.provider}
-                  onChange={(e) => setAiConfig(prev => ({ ...prev, provider: e.target.value }))}
+                  onChange={(e) => {
+                    const newProvider = e.target.value;
+                    providerSwitchRef.current = true;
+                    handleProviderSwitch(newProvider);
+                  }}
                   className="w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent/50"
                 >
                   {PROVIDERS.filter(p => p.value !== 'ollama').map(p => (
